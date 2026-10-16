@@ -1,0 +1,58 @@
+--- /mnt/data/kospi_master_controller_repaired.py	2026-10-16 15:12:15.913163985 +0000
++++ /mnt/data/kospi_master_controller_mock_guard_fixed.py	2026-10-16 15:13:28.595767778 +0000
+@@ -385,12 +385,22 @@
+     """UME quality → Arena quality. 누락/미인식 품질은 GOOD으로 낙관하지 않는다."""
+     if "quality" not in df.columns or df.empty:
+         return "MISSING"
+-    vals = df["quality"].dropna().astype(str).str.lower()
++    vals = df["quality"].dropna().astype(str).str.strip().str.lower()
+     if vals.empty:
+         return "MISSING"
+     return _UME_QUALITY_MAP.get(vals.iloc[-1], "MISSING")
+ 
+ 
++def _reject_mock_as_live(raw: pd.DataFrame) -> None:
++    """UME mock provider data is for contract tests, not live market data."""
++    if isinstance(raw, pd.DataFrame) and "source" in raw.columns:
++        sources = (
++            raw["source"].dropna().astype(str).str.strip().str.lower().unique().tolist()
++        )
++        if sources and all(name == "mock" or name.startswith("mock_") for name in sources):
++            raise RuntimeError("UME mock provider data is not live market data")
++
++
+ def _ume_market_to_arena(raw: pd.DataFrame, symbol: str):
+     """UME Market.market() 표준 출력 → Arena 계약 DataFrame (이 컨트롤러 책임).
+ 
+@@ -414,7 +424,7 @@
+         result["source"] = "ume"
+     if "quality" in result.columns:
+         result["quality"] = result["quality"].map(
+-            lambda quality: _UME_QUALITY_MAP.get(str(quality).lower(), "MISSING")
++            lambda quality: _UME_QUALITY_MAP.get(str(quality).strip().lower(), "MISSING")
+             if pd.notna(quality) else "MISSING"
+         )
+     else:
+@@ -458,6 +468,7 @@
+             raw = source.fetch_bars("KOSPI", None, None)
+             if raw is None or raw.empty:
+                 raise ValueError("UME returned no bars")
++            _reject_mock_as_live(raw)
+             had_trade_amount = any(
+                 column in raw.columns for column in ("trade_amount", "amount", "turnover")
+             )
+@@ -472,12 +483,14 @@
+             raw = source.fetch_bars("KOSPI", None, None)
+             if raw is None or raw.empty:
+                 raise ValueError("UME returned no bars")
++            _reject_mock_as_live(raw)
+             arena_df, derived = _ume_market_to_arena(raw, "KOSPI")
+         else:
+             source = market_cls(providers=list(ume_providers), fetch_mode="fallback")
+             raw = source.market("KOSPI", count=ume_count)
+             if raw is None or raw.empty:
+                 raise ValueError("UME returned no bars")
++            _reject_mock_as_live(raw)
+             arena_df, derived = _ume_market_to_arena(raw, "KOSPI")
+         quality = _quality_from_ume(raw)
+         return arena_df, "ume", quality, derived, ""
